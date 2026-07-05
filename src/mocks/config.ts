@@ -11,14 +11,14 @@
 // ────────────────────────────────────────────────────────────────
 
 /** 쓰기(POST/PATCH/DELETE) 실패 확률 (0~1) */
-export const WRITE_FAILURE_RATE = 0.15
+export const WRITE_FAILURE_RATE = 0.15;
 
 /** 읽기(GET) 실패 확률 (0~1) */
-export const READ_FAILURE_RATE = 0.02
+export const READ_FAILURE_RATE = 0.02;
 
 /** 응답 지연 최소/최대 (ms) */
-export const MIN_LATENCY = 200
-export const MAX_LATENCY = 800
+export const MIN_LATENCY = 200;
+export const MAX_LATENCY = 800;
 
 /** 초기 시드 태스크 개수 */
-export const SEED_COUNT = 5000
+export const SEED_COUNT = 5000;
