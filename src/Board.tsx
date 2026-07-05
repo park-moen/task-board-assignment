@@ -1,6 +1,7 @@
-import type { Status, Task } from './types';
-import { useEffect, useMemo, useState } from 'react';
-import { getTasks } from './api/client';
+import type { Status } from './types';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { taskQueries } from './api/queries';
 import { Column } from './components/Column';
 
 const COLUMNS: { status: Status; title: string }[] = [
@@ -10,34 +11,43 @@ const COLUMNS: { status: Status; title: string }[] = [
 ];
 
 export default function Board() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: tasks, isLoading, isError, error, refetch } = useQuery(taskQueries.list());
 
-  useEffect(() => {
-    // 순진한 초기 로드: 로딩만 처리합니다.
-    // TODO(P1): 에러 상태 + 재시도, 빈 상태 처리를 구현하세요.
-    getTasks()
-      .then(data => setTasks(data))
-      .finally(() => setLoading(false));
-  }, []);
-
-  // ⚠️ 서버에 저장하지 않고 로컬 상태만 바꾸는 "순진한" 이동입니다.
-  // TODO(P1): 낙관적 업데이트 + 실패 시 롤백 + 경쟁 상태 처리를 구현하세요.
-  //   - updateTask(id, { status, version }) 로 서버에 반영
-  //   - 실패(15%)하면 이전 상태로 되돌리고 사용자에게 알림
-  //   - 같은 카드를 빠르게 연속 이동해도 최종 상태가 서버와 일치하도록
+  // ⚠️ 화면(캐시)만 바꾸는 "순진한" 이동입니다. 서버에 저장하지 않습니다.
+  // TODO(#7): 낙관적 업데이트 + 실패 시 롤백 + 경쟁 상태 처리로 교체 예정
   const moveTask = (id: string, status: Status) => {
-    setTasks(prev => prev.map(t => (t.id === id ? { ...t, status } : t)));
+    queryClient.setQueryData(taskQueries.list().queryKey, prev =>
+      prev?.map(t => (t.id === id ? { ...t, status } : t)));
   };
 
   const byStatus = useMemo(() => {
-    const map: Record<Status, Task[]> = { 'todo': [], 'in-progress': [], 'done': [] };
-    for (const t of tasks) map[t.status].push(t);
+    const map: Record<Status, NonNullable<typeof tasks>> = { 'todo': [], 'in-progress': [], 'done': [] };
+    for (const t of tasks ?? []) map[t.status].push(t);
     return map;
   }, [tasks]);
 
-  if (loading)
+  if (isLoading) {
     return <p className="hint">불러오는 중…</p>;
+  }
+
+  if (isError) {
+    return (
+      <div className="hint error-state">
+        <p>
+          태스크를 불러오지 못했습니다.
+          {error instanceof Error ? ` (${error.message})` : ''}
+        </p>
+        <button type="button" className="retry-button" onClick={() => refetch()}>
+          재시도
+        </button>
+      </div>
+    );
+  }
+
+  if (!tasks || tasks.length === 0) {
+    return <p className="hint empty-state">표시할 태스크가 없습니다.</p>;
+  }
 
   return (
     <div className="board">
