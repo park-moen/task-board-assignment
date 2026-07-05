@@ -1,4 +1,5 @@
 import antfu from '@antfu/eslint-config';
+import pluginQuery from '@tanstack/eslint-plugin-query';
 
 export default antfu({
   stylistic: {
@@ -16,4 +17,6 @@ export default antfu({
     'n/prefer-global/process': 'off',
   },
   react: true,
+
+  ...pluginQuery.configs['flat/recommended'],
 });
