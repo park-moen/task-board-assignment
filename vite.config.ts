@@ -1,6 +1,7 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 
 // GitHub Pages 배포 시: 저장소 이름으로 base 를 지정하세요.
 //   예) VITE_BASE=/my-repo/ npm run build
@@ -13,4 +14,4 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
   },
-})
+});
