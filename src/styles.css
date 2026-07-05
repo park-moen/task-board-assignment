@@ -126,3 +126,23 @@ body {
 .badge-low {
   background: var(--low);
 }
+
+.error-state {
+  color: var(--high);
+  text-align: center;
+  padding: 40px 0;
+}
+
+.retry-button {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  cursor: pointer;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 0;
+}
