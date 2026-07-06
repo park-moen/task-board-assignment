@@ -15,6 +15,7 @@ export default antfu({
   ],
   rules: {
     'n/prefer-global/process': 'off',
+    'react-refresh/only-export-components': 'off',
   },
   react: true,
 

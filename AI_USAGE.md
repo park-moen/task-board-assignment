@@ -16,3 +16,4 @@
 
 ## 4. 스스로 판단해서 결정한 부분
 - AI 제안과 다르게 결정한 지점과 그 이유.
+- Toast 컴포넌트(`src/contexts/ToastContext.tsx`) 구현 중 `eslint-plugin-react-refresh`의 `only-export-components` 경고가 발생했습니다. Claude는 Context/Provider와 `useToast` 훅을 별도 파일로 분리해 Vite Fast Refresh(HMR)를 유지하는 방안을 제안했지만, 두 가지 근거로 제안과 다르게 한 파일에 유지하기로 했습니다. ① 이 파일은 76줄이고 export는 3개(`ToastProvider`, `useToast`, `ToastContainer`)라, 3개 파일로 분리하면 코드량에 비해 파일을 오가며 참조하는 탐색 비용이 불균형하게 늘어납니다. ② Fast Refresh가 깨져 전체 새로고침이 발생해도 잃는 상태는 화면에 렌더링된 Toast 배열(휘발성 UI 상태)뿐이라, 손실 비용이 낮습니다. 이 co-location 방식은 앞으로 비슷한 상황(관련 상태·훅·컴포넌트를 한 파일에 모으는 경우)에서 우선적으로 채택할 방침이라, 그때마다 `eslint-disable-next-line` 주석을 반복해서 다는 대신 `eslint.config.js`에서 규칙 자체를 프로젝트 전체적으로 껐습니다(파일별 예외 처리가 아니라, 반복될 패턴에 대한 의도적인 전역 선택). 다만 이 판단은 현재까지의 경험을 기록한 것으로, 이후 다른 상황을 겪으며 방침이 바뀔 수 있습니다.
