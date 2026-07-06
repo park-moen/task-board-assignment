@@ -3,6 +3,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { ToastContainer, ToastProvider } from './contexts/ToastContext';
 import { queryClient } from './lib/queryClient';
 import './styles.css';
 
@@ -19,7 +20,10 @@ enableMocking().then(() => {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <ToastProvider>
+          <App />
+          <ToastContainer />
+        </ToastProvider>
         <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
     </React.StrictMode>,
