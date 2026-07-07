@@ -23,7 +23,7 @@ export default function Board() {
       return;
     }
 
-    moveTask({ id, status, version: task.version });
+    moveTask({ id, status });
   };
 
   const byStatus = useMemo(() => {
