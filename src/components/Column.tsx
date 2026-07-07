@@ -8,12 +8,14 @@ interface Props {
   status: Status;
   tasks: Task[];
   onMove: (id: string, status: Status) => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
 }
 
 // 실측(measureElement) 전까지 쓰는 초기 추정치일 뿐, 실제 카드 높이를 강제하지 않음
 const ESTIMATED_CARD_HEIGHT = 76;
 
-export function Column({ title, status, tasks, onMove }: Props) {
+export function Column({ title, status, tasks, onMove, onEdit, onDelete }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // 의존성이 없는 고정값이므로 useCallback으로 참조를 고정해, 매 렌더마다 옵션이
   // "바뀐 것으로" 오인되어 위치 재계산(incremental 최적화 무력화)이 일어나지 않게 한다
@@ -57,7 +59,7 @@ export function Column({ title, status, tasks, onMove }: Props) {
                 className="card-row"
                 style={{ transform: `translateY(${virtualItem.start}px)` }}
               >
-                <Card task={task} />
+                <Card task={task} onEdit={onEdit} onDelete={onDelete} />
               </div>
             );
           })}
