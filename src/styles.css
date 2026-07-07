@@ -38,6 +38,28 @@ body {
   margin: 4px 0 16px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.search-input {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.search-input input {
+  width: 100%;
+  max-width: 320px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+}
+
 .board {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

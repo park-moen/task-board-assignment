@@ -1,9 +1,11 @@
 import type { Status } from './types';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useMoveTask } from './api/mutations';
 import { taskQueries } from './api/queries';
 import { Column } from './components/Column';
+import { Input } from './components/Input';
+import { filterByTitle } from './lib/tasks';
 
 const COLUMNS: { status: Status; title: string }[] = [
   { status: 'todo', title: 'To Do' },
@@ -14,6 +16,7 @@ const COLUMNS: { status: Status; title: string }[] = [
 export default function Board() {
   const { data: tasks, isLoading, isError, error, refetch } = useQuery(taskQueries.list());
   const { mutate: moveTask } = useMoveTask();
+  const [query, setQuery] = useState('');
 
   const handleMove = (id: string, status: Status) => {
     const task = tasks?.find(task => task.id === id);
@@ -28,9 +31,9 @@ export default function Board() {
 
   const byStatus = useMemo(() => {
     const map: Record<Status, NonNullable<typeof tasks>> = { 'todo': [], 'in-progress': [], 'done': [] };
-    for (const t of tasks ?? []) map[t.status].push(t);
+    for (const t of filterByTitle(tasks ?? [], query)) map[t.status].push(t);
     return map;
-  }, [tasks]);
+  }, [tasks, query]);
 
   if (isLoading) {
     return <p className="hint">불러오는 중…</p>;
@@ -54,17 +57,26 @@ export default function Board() {
     return <p className="hint empty-state">표시할 태스크가 없습니다.</p>;
   }
 
+  const hasResults = Object.values(byStatus).some(list => list.length > 0);
+
   return (
-    <div className="board">
-      {COLUMNS.map(col => (
-        <Column
-          key={col.status}
-          title={col.title}
-          status={col.status}
-          tasks={byStatus[col.status]}
-          onMove={handleMove}
-        />
-      ))}
-    </div>
+    <>
+      <Input value={query} onChange={setQuery} label="태스크 제목 검색" placeholder="제목으로 검색" />
+      {hasResults
+        ? (
+            <div className="board">
+              {COLUMNS.map(col => (
+                <Column
+                  key={col.status}
+                  title={col.title}
+                  status={col.status}
+                  tasks={byStatus[col.status]}
+                  onMove={handleMove}
+                />
+              ))}
+            </div>
+          )
+        : <p className="hint empty-state">검색 결과가 없습니다.</p>}
+    </>
   );
 }
