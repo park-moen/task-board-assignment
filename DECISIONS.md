@@ -90,9 +90,18 @@ TanStack Query의 뮤테이션 `scope` 옵션으로 해결했습니다. 같은 `
   </tr>
   </table>
 
-  <img width="282" height="856" alt="virtual-trade-off" src="https://github.com/user-attachments/assets/ee021a09-061b-41c4-800a-d535a148497a" />
 
-- **포기한 것**: 검색/필터(#10)는 이 Issue 범위 밖이라 다루지 않았습니다. 컬럼 폭이 극단적으로 좁아져 카드 제목이 줄바꿈되는 반응형 엣지 케이스는 실측(`measureElement`) 방식이 자동으로 대응하므로 별도 처리하지 않았습니다.
+- **검색과의 상호작용**: 가상화는 드래그 이동뿐 아니라 검색으로 필터링된 결과 목록에도 동일하게 적용됩니다. 이를 확인하기 위해 `MutationObserver`로 검색어 입력이 바뀔 때마다 실제 DOM에 추가/제거되는 카드 노드 수를 로그로 남기는 코드를 임시로 추가했고, 측정 후 제거했습니다. 측정 결과, 적용 전에는 매칭된 태스크 수만큼(예: "1" 입력 시 2,084개) 카드가 DOM에 렌더링됐지만, 적용 후에는 매칭 개수와 무관하게 뷰포트와 `overscan`을 합친 범위(~40개 내외)로 유지되었습니다.
+  - 다만 "DOM 노드 수가 일정하다"는 것이 "DOM 변경이 발생하지 않는다"는 의미는 아닙니다. 카드는 `getItemKey`로 태스크 id를 key로 사용하므로, 검색어가 바뀌어 필터링된 배열의 구성이 달라지면(예: 뷰포트에 보이던 카드가 더 이상 매칭되지 않는 경우) React는 사라진 id의 카드를 제거하고 새로 매칭된 id의 카드를 추가합니다. 즉 총 노드 수(~40개 내외)는 유지되더라도 렌더링되는 카드 목록은 검색 결과에 따라 교체될 수 있으며, 이 추가/제거 범위는 매번 뷰포트 크기 이내로 제한됩니다.
+  - [Issue #10](https://github.com/park-moen/task-board-assignment/issues/10)에서 예상했던 "가상화와 함께 적용하면 대량 데이터에서도 렌더링 부담을 낮춘 검색 경험을 제공한다"는 점을 실측으로 확인했습니다.
+
+  <table>
+  <tr><th>적용 전 (검색 타이핑 시 DOM 변화)</th><th>적용 후 (검색 타이핑 시 DOM 변화)</th></tr>
+  <tr>
+  <td><img width="757" height="107" alt="가상화 적용 전 검색 타이핑 시 DOM 변화 측정 결과" src="https://github.com/user-attachments/assets/5de7ad09-dbb4-42bd-ab9f-d654668793b3" /></td>
+  <td><img width="758" height="100" alt="가상화 적용 후 검색 타이핑 시 DOM 변화 측정 결과" src="https://github.com/user-attachments/assets/716349a9-8d15-4403-a20a-26cc7e8b1f77" /></td>
+  </tr>
+  </table>
 
 ## 5. 정답이 없던 결정들 (명세서에 명시되지 않은 항목)
 - **네트워크 완전 단절** 시 동작을 어떻게 정의했나요? 왜?

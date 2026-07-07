@@ -41,4 +41,19 @@ describe('filterByTitle', () => {
     const tasks = [make('a'), make('b')];
     expect(filterByTitle(tasks, '   ')).toHaveLength(2);
   });
+
+  it('매칭되는 태스크가 없으면 빈 배열을 반환한다', () => {
+    const tasks = [make('a', { title: 'Fix login bug' }), make('b', { title: 'Write docs' })];
+    expect(filterByTitle(tasks, 'nonexistent')).toEqual([]);
+  });
+
+  it('제목 중간에 있는 부분 문자열도 매칭한다', () => {
+    const tasks = [make('a', { title: 'Fix login bug' }), make('b', { title: 'Write docs' })];
+    expect(filterByTitle(tasks, 'login')).toHaveLength(1);
+  });
+
+  it('검색어 앞뒤 공백은 무시하고 매칭한다', () => {
+    const tasks = [make('a', { title: 'Fix login bug' }), make('b', { title: 'Write docs' })];
+    expect(filterByTitle(tasks, '  fix  ')).toHaveLength(1);
+  });
 });
