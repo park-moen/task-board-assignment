@@ -53,8 +53,46 @@ TanStack Query의 뮤테이션 `scope` 옵션으로 해결했습니다. 같은 `
 **왜 `Promise.race`/요청 취소 대신 `scope`인가**: 취소는 클라이언트가 응답을 무시하게 할 뿐, mock 서버(`src/mocks/handlers.ts`)가 취소 신호(`AbortSignal`)를 전혀 확인하지 않아 서버 쪽 처리는 그대로 완료됩니다. 즉 "취소했다고 믿는" 요청이 실제로는 서버 상태를 바꿔놓아 다음 요청과 예측 불가능한 충돌을 일으킬 수 있습니다. `scope`는 요청 자체를 미루기만 하고 항상 실제 응답을 기다리므로 서버와 클라이언트의 상태 인식이 항상 일치합니다.
 
 ## 4. 대량 데이터 성능 (5,000개)
-- 검색/필터/드래그를 부드럽게 만들기 위해 무엇을 선택했고 **무엇을 포기**했나요?
-- 가능하면 측정 근거(예: 최적화 전/후 체감·프로파일)를 남겨 주세요.
+- `Column.tsx`에서 전체 `tasks` 배열을 직접 `map()`으로 렌더링하던 방식을 `@tanstack/react-virtual`의 `useVirtualizer` 기반 렌더링으로 변경했습니다. 이제 뷰포트에 보이는 카드와 `overscan`으로 지정한 여분의 카드만 DOM에 렌더링합니다(`overscan: 5`). 초기 위치 계산을 위한 카드 높이는 `estimateSize`로 제공하고, 실제 렌더링된 높이는 `measureElement` ref로 측정해 보정합니다.
+  - 고정 높이 대신 실측(`measureElement`) 방식을 선택한 이유: 현재 카드는 제목/배지/날짜만 렌더링하므로 높이가 사실상 일정하지만, 향후 태그나 설명이 추가되면(#11) 카드마다 높이가 달라질 수 있습니다. 실측 방식은 추가 구현 비용이 작으면서도 이후 콘텐츠 높이 변화에 대응할 수 있어 선택했습니다.
+  - `getItemKey: index => tasks[index].id`를 명시했습니다. 기본값처럼 index를 key로 사용하면, 카드가 다른 컬럼으로 이동해 배열 내 항목 위치가 밀릴 때 동일한 index 위치의 측정값이 다른 카드에 재사용될 수 있습니다. 현재는 카드 높이가 균일해 문제가 눈에 잘 띄지 않지만, 높이가 균일하다는 조건에 의존하지 않도록 안정적인 task id를 key로 사용했습니다.
+  - 기존 flex `gap: 8px` 방식은 절대 위치(`transform: translateY`)로 배치되는 가상화 아이템에 그대로 적용하기 어렵습니다. 대신 `.card-row`에 `padding-bottom: 8px`을 적용해 측정되는 행 높이에 카드 간격이 포함되도록 처리했습니다.
+
+- **측정**: React `<Profiler>`로 실제 commit 시간을 비교했습니다. 측정 시에는 개발 환경의 중복 렌더링이 결과에 섞이지 않도록 `main.tsx`의 `StrictMode`를 임시로 제거했고, 측정 후 다시 복원했습니다.
+
+  | 상태 | mount commit 시간 | 드래그 1회당 update commit 시간 |
+  |---|---|---|
+  | 적용 전 (전체 5,000개 렌더링) | 76 ~ 92ms | 48 ~ 58ms |
+  | 적용 후 (가상화) | 2ms | 1 ~ 3ms |
+
+  mount commit 시간은 약 35 ~ 40배, 드래그 1회당 update commit 시간은 약 20 ~ 30배 개선되었습니다.
+
+  <table>
+  <tr><th>적용 전 (mount commit)</th><th>적용 후 (mount commit)</th></tr>
+  <tr>
+  <td><img width="662" height="54" alt="가상화 적용 전 mount commit 측정 결과" src="https://github.com/user-attachments/assets/397e3877-11c4-46ba-8d0c-b2e61fa6c1c4" /></td>
+  <td><img width="672" height="55" alt="가상화 적용 후 mount commit 측정 결과" src="https://github.com/user-attachments/assets/3b1feb42-149a-449a-bf74-a686a79b50b0" /></td>
+  </tr>
+  <tr><th>적용 전 (드래그 update commit)</th><th>적용 후 (드래그 update commit)</th></tr>
+  <tr>
+  <td><img width="675" height="127" alt="가상화 적용 전 드래그 update commit 측정 결과" src="https://github.com/user-attachments/assets/5cd08203-184f-466c-a6c1-f03c8656e713" /></td>
+  <td><img width="674" height="180" alt="가상화 적용 후 드래그 update commit 측정 결과" src="https://github.com/user-attachments/assets/f1a8ae9b-c942-4874-931f-825cfa45a05c" /></td>
+  </tr>
+  </table>
+
+- **트레이드오프**: 가상화 적용 전에는 전체 카드가 DOM에 존재한 상태에서 `overflow-y: auto`로 스크롤되므로, 스크롤 자체로 인한 React 리렌더는 발생하지 않았습니다. 반면 가상화 적용 후에는 스크롤 위치에 따라 가시 영역에 포함되는 카드 범위가 바뀌기 때문에 React 리렌더가 발생합니다(React DevTools "Highlight updates"로 확인). 다만 스크롤 중 발생하는 개별 리렌더 비용은 측정된 update 커밋 시간 기준 1 ~ 3ms 수준으로, 60fps의 프레임 예산인 16.6ms 안에 들어옵니다. 반대로 가상화 적용 전에는 카드 하나를 이동하는 상호작용에서도 5,000개 카드 전체에 대한 렌더링/조정 비용이 발생했고, 이 비용은 48 ~ 58ms 수준이었습니다. 즉, 가상화는 "빈번하지만 저렴한 스크롤 업데이트"를 감수하는 대신 "상호작용마다 발생하던 비싼 전체 목록 업데이트"를 줄이는 선택입니다. 측정 결과 이 프로젝트에서는 후자의 비용이 더 크기 때문에, 가상화 적용이 전체 상호작용 성능에 더 유리합니다.
+
+  <table>
+  <tr><th>적용 전 (스크롤 시 리렌더 없음)</th><th>적용 후 (스크롤 시 리렌더 발생)</th></tr>
+  <tr>
+  <td><img width="673" height="57" alt="scroll-before" src="https://github.com/user-attachments/assets/de1802ca-229c-46db-8030-385c9cafe465" /></td>
+  <td><img width="669" height="347" alt="scroll-after" src="https://github.com/user-attachments/assets/dcbe26a0-286d-4cc8-a92c-02cc7de9e972" /></td>
+  </tr>
+  </table>
+
+  <img width="282" height="856" alt="virtual-trade-off" src="https://github.com/user-attachments/assets/ee021a09-061b-41c4-800a-d535a148497a" />
+
+- **포기한 것**: 검색/필터(#10)는 이 Issue 범위 밖이라 다루지 않았습니다. 컬럼 폭이 극단적으로 좁아져 카드 제목이 줄바꿈되는 반응형 엣지 케이스는 실측(`measureElement`) 방식이 자동으로 대응하므로 별도 처리하지 않았습니다.
 
 ## 5. 정답이 없던 결정들 (명세서에 명시되지 않은 항목)
 - **네트워크 완전 단절** 시 동작을 어떻게 정의했나요? 왜?
