@@ -3,12 +3,15 @@ import type { Task } from '../types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTask, deleteTask, updateTask } from './client';
+import { ApiError, createTask, deleteTask, updateTask } from './client';
 import { useCreateTask, useDeleteTask, useMoveTask, useUpdateTask } from './mutations';
 import { taskQueries } from './queries';
 
 vi.mock('../contexts/ToastContext', () => ({ useToast: () => ({ addToast: vi.fn() }) }));
-vi.mock('./client', () => ({ createTask: vi.fn(), updateTask: vi.fn(), deleteTask: vi.fn() }));
+vi.mock('./client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./client')>();
+  return { ...actual, createTask: vi.fn(), updateTask: vi.fn(), deleteTask: vi.fn() };
+});
 
 function make(id: string, over: Partial<Task> = {}): Task {
   return {
@@ -184,6 +187,70 @@ describe('useMoveTask (동시 이동 경쟁 상태)', () => {
     // M2 실패가 M3의 이미 반영된 낙관적 상태('todo')를 되돌리면 안 됨
     expect(getTaskX()?.status).toBe('todo');
   });
+
+  it('409(버전 충돌)면 로컬 스냅샷 대신 서버가 알려준 최신 상태로 갱신한다', async () => {
+    const queryClient = new QueryClient();
+    const taskX = make('x');
+    queryClient.setQueryData(taskQueries.list().queryKey, [taskX]);
+
+    const request = deferred<Task>();
+    vi.mocked(updateTask).mockReturnValue(request.promise);
+
+    const { result } = renderHook(() => useMoveTask(), { wrapper: createWrapper(queryClient) });
+
+    await act(async () => {
+      result.current.mutate({ id: 'x', status: 'in-progress' });
+    });
+
+    // 그 사이 다른 클라이언트가 먼저 성공시켜 서버가 이미 다른 상태로 확정된 상황
+    const serverTask = { ...taskX, status: 'done', version: 5 };
+    await act(async () => {
+      request.reject(new ApiError(409, '충돌', { current: serverTask }));
+    });
+
+    await waitFor(() => {
+      const tasks = queryClient.getQueryData<Task[]>(taskQueries.list().queryKey);
+      expect(tasks?.find(t => t.id === 'x')).toEqual(serverTask);
+    });
+  });
+
+  it('먼저 보낸 요청이 409로 실패해도, 이미 더 최신 이동이 반영한 낙관적 상태를 되돌리지 않는다', async () => {
+    const queryClient = new QueryClient();
+    const taskX = make('x');
+    queryClient.setQueryData(taskQueries.list().queryKey, [taskX]);
+
+    const r1 = deferred<Task>();
+    const r2 = deferred<Task>();
+    vi.mocked(updateTask).mockReturnValueOnce(r1.promise).mockReturnValueOnce(r2.promise);
+
+    const { result } = renderHook(() => useMoveTask(), { wrapper: createWrapper(queryClient) });
+    const getTaskX = () =>
+      queryClient.getQueryData<Task[]>(taskQueries.list().queryKey)?.find(t => t.id === 'x');
+
+    // M1: todo -> in-progress (scope 대기 중인 요청이 아직 나감)
+    await act(async () => {
+      result.current.mutate({ id: 'x', status: 'in-progress' });
+    });
+    // M2: in-progress -> done (M1 응답 전에 연속 이동, onMutate는 즉시 반영되어 화면엔 이미 'done')
+    await act(async () => {
+      result.current.mutate({ id: 'x', status: 'done' });
+    });
+    expect(getTaskX()?.status).toBe('done');
+
+    // M1이 409로 실패 — 다른 클라이언트가 먼저 성공시켜 서버가 이미 다른 상태로 확정된 상황
+    const serverTask = { ...taskX, status: 'in-progress', version: 5 };
+    await act(async () => {
+      r1.reject(new ApiError(409, '충돌', { current: serverTask }));
+    });
+
+    // M1의 409 롤백이, M2가 이미 반영해둔 'done'을 되돌리면 안 됨(appliedStatus와 다르므로 스킵)
+    expect(getTaskX()?.status).toBe('done');
+
+    await act(async () => {
+      r2.resolve({ ...taskX, status: 'done', version: 6 });
+    });
+    await waitFor(() => expect(getTaskX()?.status).toBe('done'));
+  });
 });
 
 describe('useCreateTask (낙관적 생성)', () => {
@@ -304,6 +371,70 @@ describe('useUpdateTask (낙관적 수정)', () => {
       expect(getTaskA()?.version).toBe(2);
       expect(getTaskA()?.title).toBe('바뀐 제목');
     });
+  });
+
+  it('409(버전 충돌)면 되돌리지 않고 서버가 알려준 최신 상태로 갱신한다', async () => {
+    const queryClient = new QueryClient();
+    const taskA = make('a', { title: '원래 제목', priority: 'low' });
+    queryClient.setQueryData(taskQueries.list().queryKey, [taskA]);
+
+    const request = deferred<Task>();
+    vi.mocked(updateTask).mockReturnValue(request.promise);
+
+    const { result } = renderHook(() => useUpdateTask(), { wrapper: createWrapper(queryClient) });
+    const getTaskA = () =>
+      queryClient.getQueryData<Task[]>(taskQueries.list().queryKey)?.find(t => t.id === 'a');
+
+    await act(async () => {
+      result.current.mutate({ id: 'a', title: '바뀐 제목', priority: 'high' });
+    });
+
+    const serverTask = { ...taskA, title: '다른 곳에서 바뀐 제목', version: 9 };
+    await act(async () => {
+      request.reject(new ApiError(409, '충돌', { current: serverTask }));
+    });
+
+    await waitFor(() => {
+      expect(getTaskA()).toEqual(serverTask);
+    });
+  });
+
+  it('먼저 보낸 요청이 409로 실패해도, 이미 더 최신 수정이 반영한 값을 되돌리지 않는다', async () => {
+    const queryClient = new QueryClient();
+    const taskA = make('a', { title: '원래 제목', priority: 'low' });
+    queryClient.setQueryData(taskQueries.list().queryKey, [taskA]);
+
+    const r1 = deferred<Task>();
+    const r2 = deferred<Task>();
+    vi.mocked(updateTask).mockReturnValueOnce(r1.promise).mockReturnValueOnce(r2.promise);
+
+    const { result } = renderHook(() => useUpdateTask(), { wrapper: createWrapper(queryClient) });
+    const getTaskA = () =>
+      queryClient.getQueryData<Task[]>(taskQueries.list().queryKey)?.find(t => t.id === 'a');
+
+    // M1: 제목을 "바뀐 제목"으로 (scope 대기 중, 요청은 아직 응답 전)
+    await act(async () => {
+      result.current.mutate({ id: 'a', title: '바뀐 제목', priority: 'high' });
+    });
+    // M2: M1 응답 전에 다시 "또 바뀐 제목"으로 (onMutate는 즉시 반영됨)
+    await act(async () => {
+      result.current.mutate({ id: 'a', title: '또 바뀐 제목', priority: 'high' });
+    });
+    expect(getTaskA()?.title).toBe('또 바뀐 제목');
+
+    // M1이 409로 실패 — 다른 클라이언트가 먼저 성공시켜 서버가 이미 다른 상태로 확정된 상황
+    const serverTask = { ...taskA, title: '바뀐 제목', version: 9 };
+    await act(async () => {
+      r1.reject(new ApiError(409, '충돌', { current: serverTask }));
+    });
+
+    // M1의 409 롤백이, M2가 이미 반영해둔 "또 바뀐 제목"을 되돌리면 안 됨(stillApplied가 false이므로 스킵)
+    expect(getTaskA()?.title).toBe('또 바뀐 제목');
+
+    await act(async () => {
+      r2.resolve({ ...taskA, title: '또 바뀐 제목', priority: 'high', version: 10 });
+    });
+    await waitFor(() => expect(getTaskA()?.title).toBe('또 바뀐 제목'));
   });
 });
 

@@ -1,10 +1,30 @@
+import type { QueryClient } from '@tanstack/react-query';
 import type { Priority, Status, Task } from '../types';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { useToast } from '../contexts/ToastContext';
+import { getConflictServerTask, toFailureToastMessage } from '../lib/errors';
 import { addTask, insertTaskAt, moveTask, removeTask, updateTaskFields } from '../lib/tasks';
-import { createTask, deleteTask, updateTask } from './client';
+import { ApiError, createTask, deleteTask, updateTask } from './client';
 import { taskQueries } from './queries';
+
+/**
+ * 409 충돌로 받은 서버 최신 상태는 이 뮤테이션이 낙관적으로 반영한 값이
+ * 아직 캐시에 남아 있을 때만 적용한다.
+ *
+ * scope로 요청은 직렬화되지만 onMutate는 즉시 실행되므로, 대기 중에도 같은 태스크에 대한
+ * 더 최신 낙관적 상태가 캐시에 반영될 수 있다. 이 경우 오래된 실패 응답이 최신 상태를
+ * 덮어쓰지 않도록 서버 상태 적용을 건너뛴다.
+ */
+function applyServerSnapshotIfStillApplied(
+  queryClient: QueryClient,
+  id: string,
+  serverTask: Task,
+  isStillApplied: (task: Task) => boolean,
+) {
+  queryClient.setQueryData(taskQueries.list().queryKey, prev =>
+    prev?.map(task => (task.id === id && isStillApplied(task) ? serverTask : task)));
+}
 
 interface MoveTaskInput {
   id: string;
@@ -20,13 +40,13 @@ export function useMoveTask() {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
 
-  // useMutation()은 scope가 훅 생성 시점에 고정되어 카드별로 다르게 줄 수 없어서,
-  // 호출마다 getMutationCache().build()로 새 뮤테이션을 만들어 카드 id를 scope로 부여한다.
+  // useMutation()은 scope가 훅 생성 시점에 고정되어 태스크별로 다르게 줄 수 없어서,
+  // 호출마다 getMutationCache().build()로 새 뮤테이션을 만들어 태스크 id를 scope로 부여한다.
   const mutate = useCallback(({ id, status }: MoveTaskInput) => {
     const mutation = queryClient.getMutationCache().build<Task, Error, MoveTaskInput, MoveTaskContext>(
       queryClient,
       {
-        // 같은 카드(id)에 대한 뮤테이션은 직렬로 실행되어, 응답 순서가 요청 순서와 어긋나는 경쟁 상태를 방지
+        // 같은 태스크(id)에 대한 뮤테이션은 직렬로 실행되어, 응답 순서가 요청 순서와 어긋나는 경쟁 상태를 방지
         scope: { id },
 
         mutationFn: (variables) => {
@@ -34,9 +54,9 @@ export function useMoveTask() {
           const current = queryClient
             .getQueryData(taskQueries.list().queryKey)
             ?.find(task => task.id === variables.id);
-          // 대기 중이던 사이 카드가 삭제되는 등으로 캐시에서 사라졌을 수 있음 — non-null assertion 대신 명시적으로 실패 처리
+          // 요청이 대기하는 동안 태스크가 삭제되어 캐시에서 사라졌을 수 있으므로 명시적으로 실패 처리한다.
           if (!current) {
-            return Promise.reject(new Error(`카드를 찾을 수 없습니다. (id: ${variables.id})`));
+            return Promise.reject(new ApiError(404, `카드를 찾을 수 없습니다. (id: ${variables.id})`, null));
           }
           return updateTask(variables.id, { status: variables.status, version: current.version });
         },
@@ -54,9 +74,24 @@ export function useMoveTask() {
           return { previousTask, appliedStatus: variables.status };
         },
 
-        // version은 건드리지 않음 — 실패해도 서버 version은 그대로라, 되돌리면 이미 성공한 다른 요청의 version까지 되돌아가 409가 남
-        // status도 appliedStatus(이 뮤테이션이 세팅한 값)와 현재 값이 같을 때만 되돌림 — 더 최신 이동이 이미 반영한 값을 덮어쓰지 않기 위함
-        onError: (_error, variables, context) => {
+        // 실패해도 서버의 version은 롤백되지 않으므로, 로컬 version을 되돌리면 이후 요청이 낡은 version으로 409를 유발할 수 있다.
+        // 현재 status가 이 뮤테이션이 적용한 값(appliedStatus)과 같을 때만 되돌린다.
+        // 그 사이 반영된 더 최신 이동 상태를 오래된 실패 응답이 덮어쓰지 않도록 하기 위함이다.
+        onError: (error, variables, context) => {
+          const serverTask = getConflictServerTask(error);
+          // 409(버전 충돌)는 로컬 스냅샷으로 롤백하지 않고, 조건이 맞을 때 서버 최신 상태를 캐시에 반영한다.
+          if (serverTask) {
+            applyServerSnapshotIfStillApplied(
+              queryClient,
+              variables.id,
+              serverTask,
+              task => task.status === context?.appliedStatus,
+            );
+            addToast('다른 곳에서 먼저 변경되어 최신 내용으로 갱신했습니다.', 'error');
+
+            return;
+          }
+
           const previousTask = context?.previousTask;
           if (previousTask) {
             queryClient.setQueryData(taskQueries.list().queryKey, prev =>
@@ -66,7 +101,7 @@ export function useMoveTask() {
                 return { ...task, status: previousTask.status };
               }));
           }
-          addToast('이동에 실패했습니다.', 'error');
+          addToast(toFailureToastMessage(error, '이동에 실패했습니다.'), 'error');
         },
 
         // status는 건드리지 않고 version/updatedAt만 반영 — 안 그러면 더 최신 낙관적 상태를 오래된 응답이 덮어씀
@@ -125,15 +160,15 @@ export function useCreateTask() {
       return { tempId };
     },
 
-    onError: (_error, _input, context) => {
+    onError: (error, _input, context) => {
       if (context?.tempId) {
         const tempId = context.tempId;
         queryClient.setQueryData(taskQueries.list().queryKey, prev => prev && removeTask(prev, tempId));
       }
-      addToast('생성에 실패했습니다.', 'error');
+      addToast(toFailureToastMessage(error, '생성에 실패했습니다.'), 'error');
     },
 
-    // 임시 태스크를 서버가 실제로 만든 태스크(진짜 id/version)로 교체
+    // 임시 태스크를 서버가 확정한 태스크(id/version 포함)로 교체한다.
     onSuccess: (createdTask, _input, context) => {
       queryClient.setQueryData(taskQueries.list().queryKey, prev =>
         prev?.map(task => (task.id === context.tempId ? createdTask : task)));
@@ -153,7 +188,7 @@ interface UpdateTaskContext {
   appliedFields: Pick<Task, 'title' | 'priority' | 'description'>;
 }
 
-/** 낙관적 수정 — useMoveTask와 동일하게 카드별 scope로 드래그/삭제와의 경쟁을 방지한다. */
+/** 낙관적 수정 — useMoveTask와 동일하게 태스크별 scope로 드래그/삭제와의 경쟁을 방지한다. */
 export function useUpdateTask() {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
@@ -169,7 +204,7 @@ export function useUpdateTask() {
             .getQueryData(taskQueries.list().queryKey)
             ?.find(task => task.id === variables.id);
           if (!current) {
-            return Promise.reject(new Error(`카드를 찾을 수 없습니다. (id: ${variables.id})`));
+            return Promise.reject(new ApiError(404, `카드를 찾을 수 없습니다. (id: ${variables.id})`, null));
           }
           return updateTask(variables.id, {
             title: variables.title,
@@ -196,8 +231,28 @@ export function useUpdateTask() {
           return { previousTask, appliedFields };
         },
 
-        // 이 뮤테이션이 적용한 값과 현재 값이 여전히 같을 때만 되돌림 — 더 최신 수정을 덮어쓰지 않기 위함
-        onError: (_error, variables, context) => {
+        // 현재 필드값이 이 뮤테이션이 적용한 값과 같을 때만 되돌린다.
+        // 그 사이 반영된 더 최신 수정 값을 오래된 실패 응답이 덮어쓰지 않도록 하기 위함이다.
+        onError: (error, variables, context) => {
+          const serverTask = getConflictServerTask(error);
+          // 409(버전 충돌)는 로컬 스냅샷으로 롤백하지 않고, 조건이 맞을 때 서버 최신 상태를 캐시에 반영한다.
+          if (serverTask) {
+            applyServerSnapshotIfStillApplied(
+              queryClient,
+              variables.id,
+              serverTask,
+              (task) => {
+                const appliedFields = context?.appliedFields;
+                return !!appliedFields
+                  && task.title === appliedFields.title
+                  && task.priority === appliedFields.priority
+                  && task.description === appliedFields.description;
+              },
+            );
+            addToast('다른 곳에서 먼저 변경되어 최신 내용으로 갱신했습니다.', 'error');
+            return;
+          }
+
           const previousTask = context?.previousTask;
           if (previousTask) {
             queryClient.setQueryData(taskQueries.list().queryKey, prev =>
@@ -217,7 +272,7 @@ export function useUpdateTask() {
                 };
               }));
           }
-          addToast('수정에 실패했습니다.', 'error');
+          addToast(toFailureToastMessage(error, '수정에 실패했습니다.'), 'error');
         },
 
         onSuccess: (updatedTask) => {
@@ -264,7 +319,7 @@ export function useDeleteTask() {
           return { previousTask, previousIndex };
         },
 
-        onError: (_error, _taskId, context) => {
+        onError: (error, _taskId, context) => {
           const previousTask = context?.previousTask;
           if (previousTask) {
             queryClient.setQueryData(taskQueries.list().queryKey, (prev) => {
@@ -277,7 +332,7 @@ export function useDeleteTask() {
               return insertTaskAt(prev, context.previousIndex, previousTask);
             });
           }
-          addToast('삭제에 실패했습니다.', 'error');
+          addToast(toFailureToastMessage(error, '삭제에 실패했습니다.'), 'error');
         },
       },
     );

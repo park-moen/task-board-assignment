@@ -1,3 +1,4 @@
+import type { Task } from '../types';
 import { ApiError } from '../api/client';
 
 export type MutationErrorKind = 'conflict' | 'network' | 'server' | 'aborted';
@@ -17,4 +18,18 @@ export function classifyMutationError(error: unknown): MutationErrorKind {
   }
 
   return 'network';
+}
+
+/** 409 충돌이면 서버가 반환한 최신 태스크를 반환하고, 아니면 undefined를 반환한다. */
+export function getConflictServerTask(error: unknown): Task | undefined {
+  if (!(error instanceof ApiError) || error.status !== 409) {
+    return undefined;
+  }
+
+  return (error.payload as { current?: Task } | null)?.current;
+}
+
+/** 네트워크 오류는 공통 안내 문구로 변환하고, 그 외 오류는 호출부의 기본 메시지를 유지한다. */
+export function toFailureToastMessage(error: unknown, defaultMessage: string): string {
+  return classifyMutationError(error) === 'network' ? '네트워크 연결을 확인해주세요.' : defaultMessage;
 }
