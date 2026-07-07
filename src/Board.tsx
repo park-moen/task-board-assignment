@@ -8,6 +8,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { Input } from './components/Input';
 import { Modal } from './components/Modal';
 import { TaskForm } from './components/TaskForm';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { filterByTitle } from './lib/tasks';
 
 const COLUMNS: { status: Status; title: string }[] = [
@@ -25,6 +26,7 @@ export default function Board() {
   const { mutate: updateTask } = useUpdateTask();
   const { mutate: deleteTask } = useDeleteTask();
   const [query, setQuery] = useState('');
+  const debouncedQuery = useDebouncedValue(query, 300);
   const [formState, setFormState] = useState<FormState>(null);
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
 
@@ -41,9 +43,9 @@ export default function Board() {
 
   const byStatus = useMemo(() => {
     const map: Record<Status, NonNullable<typeof tasks>> = { 'todo': [], 'in-progress': [], 'done': [] };
-    for (const t of filterByTitle(tasks ?? [], query)) map[t.status].push(t);
+    for (const t of filterByTitle(tasks ?? [], debouncedQuery)) map[t.status].push(t);
     return map;
-  }, [tasks, query]);
+  }, [tasks, debouncedQuery]);
 
   const formTitleId = 'task-form-title';
 
