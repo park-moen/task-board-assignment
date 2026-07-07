@@ -14,3 +14,20 @@ export function filterByTitle(tasks: Task[], query: string): Task[] {
     return tasks;
   return tasks.filter(t => t.title.toLowerCase().includes(q));
 }
+
+export function addTask(tasks: Task[], task: Task): Task[] {
+  return [task, ...tasks];
+}
+
+export function insertTaskAt(tasks: Task[], index: number, task: Task): Task[] {
+  const at = Math.min(Math.max(index, 0), tasks.length);
+  return [...tasks.slice(0, at), task, ...tasks.slice(at)];
+}
+
+export function removeTask(tasks: Task[], id: string): Task[] {
+  return tasks.filter(t => t.id !== id);
+}
+
+export function updateTaskFields(tasks: Task[], id: string, patch: Partial<Task>): Task[] {
+  return tasks.map(t => (t.id === id ? { ...t, ...patch } : t));
+}
