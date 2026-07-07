@@ -1,6 +1,7 @@
 import type { Status } from './types';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
+import { useMoveTask } from './api/mutations';
 import { taskQueries } from './api/queries';
 import { Column } from './components/Column';
 
@@ -11,14 +12,18 @@ const COLUMNS: { status: Status; title: string }[] = [
 ];
 
 export default function Board() {
-  const queryClient = useQueryClient();
   const { data: tasks, isLoading, isError, error, refetch } = useQuery(taskQueries.list());
+  const { mutate: moveTask } = useMoveTask();
 
-  // ⚠️ 화면(캐시)만 바꾸는 "순진한" 이동입니다. 서버에 저장하지 않습니다.
-  // TODO(#7): 낙관적 업데이트 + 실패 시 롤백 + 경쟁 상태 처리로 교체 예정
-  const moveTask = (id: string, status: Status) => {
-    queryClient.setQueryData(taskQueries.list().queryKey, prev =>
-      prev?.map(t => (t.id === id ? { ...t, status } : t)));
+  const handleMove = (id: string, status: Status) => {
+    const task = tasks?.find(task => task.id === id);
+
+    /**  같은 컬럼 안에서 드롭한 경우(status 변화 없음)는 요청을 보내지 않음 */
+    if (!task || task.status === status) {
+      return;
+    }
+
+    moveTask({ id, status, version: task.version });
   };
 
   const byStatus = useMemo(() => {
@@ -57,7 +62,7 @@ export default function Board() {
           title={col.title}
           status={col.status}
           tasks={byStatus[col.status]}
-          onMove={moveTask}
+          onMove={handleMove}
         />
       ))}
     </div>
