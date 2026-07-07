@@ -17,9 +17,9 @@
 
 ## 2. 낙관적 업데이트 & 롤백
 
-**현재 구현 범위**: 드래그 이동(`useMoveTask`, `src/api/mutations.ts`)만 우선 적용했습니다. 생성·수정·삭제(Issue #11)는 아직 구현 전이며, 동일한 패턴(`onMutate`/`onError`/`onSuccess`)을 그대로 적용할 예정입니다.
+**현재 구현 범위**: 드래그 이동을 처리하는 `useMoveTask`와 동일한 방식으로, 생성·수정·삭제(`useCreateTask`/`useUpdateTask`/`useDeleteTask`, [Issue #11](https://github.com/park-moen/task-board-assignment/issues/11))도 mutation 생명주기(`onMutate`/`onError`/`onSuccess`)를 사용해 구현했습니다(`src/api/mutations.ts`).
 
-**동작 방식**:
+**이동(`useMoveTask`)의 동작 방식**:
 1. `onMutate`에서 `queryClient.cancelQueries`로 진행 중인 refetch를 취소합니다. 이건 단순히 취소 요청을 보내는 게 아니라, `src/api/queries.ts`의 `queryFn: ({ signal }) => getTasks(signal)`에 전달해둔 `AbortSignal`을 통해 실제 fetch 요청 자체를 중단시키는 것입니다. 만약 이 취소 없이 드래그 시점에 이미 진행 중이던 GET 요청이 남아있다면, 낙관적 업데이트 이후 뒤늦게 성공 응답으로 도착해 TanStack Query가 "새로운 서버 상태"로 착각하고 캐시를 덮어써버립니다(뮤테이션이 실패한 것도 아닌데 카드가 원래 자리로 되돌아가 보이는 버그). `await`로 이 취소가 끝나길 기다린 뒤에야 다음 단계로 넘어가, 이 경쟁 상태를 원천 차단합니다.
 2. 현재 캐시에서 이동 대상 카드 하나(`previousTask`)만 스냅샷으로 저장한 뒤, `moveTask` 순수 함수로 캐시를 낙관적으로 갱신합니다.
 3. 요청이 실패하면 `onError`에서, 현재 `status`가 이 뮤테이션이 적용했던 값(`appliedStatus`)과 같을 때만 저장해둔 스냅샷(`previousTask`)의 **`status`만** 복원하고(`version`은 건드리지 않음), `useToast`로 실패를 알립니다. 그 사이 더 최신 이동이 이미 다른 값을 반영해뒀다면 되돌리지 않습니다.
@@ -34,6 +34,13 @@
 - 서버 재조회(invalidate 후 refetch)는 실패 상황에서 또 한 번 네트워크 요청을 보내는 것이라, 이마저 실패(GET도 `READ_FAILURE_RATE`만큼 실패 가능)하거나 지연될 수 있어 롤백 자체가 불안정해집니다.
 - 반면 스냅샷 복원은 이미 메모리에 있는 값을 그대로 되돌리는 동기 연산이라 네트워크 상태와 무관하게 항상 즉시 성공합니다.
 - 되돌릴 정확한 "이전 값"을 이미 `onMutate` 시점에 확보해뒀으므로, 서버에 다시 요청하지 않아도 됩니다.
+
+**생성·수정·삭제의 세부 동작**: 위 이동의 동작 방식을 기반으로, 각각 다음과 같이 응용했습니다.
+- **생성**: 서버가 확정한 `id`/`version`이 아직 없으므로 `temp-${crypto.randomUUID()}` 형식의 임시 `id`를 만들어 목록 맨 앞에 낙관적으로 추가합니다. 성공하면 임시 태스크를 서버가 반환한 실제 태스크로 교체하고, 실패하면 임시 태스크를 제거합니다. 생성은 기존 태스크와 충돌할 대상이 없는 새 태스크를 추가하는 작업이므로, `useMoveTask`처럼 태스크별 `scope`로 직렬화할 필요가 없어 표준 `useMutation()`을 사용합니다.
+- **수정**: `useMoveTask`와 동일하게 `scope: { id }`로 태스크별 요청을 직렬화합니다. 이를 통해 같은 태스크에 대한 드래그 이동과 수정이 동시에 들어와도 서로 경쟁하지 않도록 했습니다. 실패 시에는 `title`/`priority`/`description`이 "이 mutation이 적용한 값"과 여전히 같을 때만 되돌립니다. 이는 더 최신 수정을 덮어쓰지 않기 위한 처리로, `useMoveTask`의 `appliedStatus` 가드를 세 필드에 확장한 방식입니다.
+- **삭제**: 삭제도 태스크별 `scope`로 직렬화하고, 실패 시 스냅샷(`previousTask`)을 목록에 복원합니다. 복원 시점에 이미 같은 `id`가 목록에 있으면 동일 태스크가 중복 삽입되지 않도록 추가하지 않습니다.
+
+**모달/폼 구현**: 별도 라이브러리 없이 네이티브 `<dialog>` 요소(`src/components/Modal.tsx`)로 구현했습니다. `showModal()`은 포커스 트랩, Escape 닫기, `::backdrop`을 브라우저가 기본 제공하므로 직접 구현해야 할 접근성 관련 코드가 줄어듭니다. 생성/수정은 `TaskForm` 컴포넌트 하나를 `initialValues` 유무로 공유하고(Issue #11 요구사항), 삭제 확인은 범용 `ConfirmDialog`로 분리해 재사용할 수 있도록 했습니다.
 
 ## 3. 경쟁 상태(race condition)
 
