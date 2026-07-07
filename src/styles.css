@@ -60,6 +60,34 @@ body {
   font-size: 14px;
 }
 
+.board-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-primary {
+  border-color: var(--medium);
+  background: var(--medium);
+  color: #fff;
+}
+
+.btn-danger {
+  border-color: var(--high);
+  background: var(--high);
+  color: #fff;
+}
+
 .board {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -138,9 +166,32 @@ body {
 .card-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.card-meta .date {
+  margin-right: auto;
+}
+
+.card-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.card-delete:hover {
+  color: var(--high);
+  background: rgba(9, 30, 66, 0.06);
 }
 
 .badge {
@@ -221,4 +272,74 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.modal {
+  border: none;
+  border-radius: 8px;
+  padding: 20px;
+  width: 90vw;
+  max-width: 420px;
+  box-shadow: 0 4px 16px rgba(9, 30, 66, 0.25);
+}
+
+.modal::backdrop {
+  background: rgba(9, 30, 66, 0.4);
+}
+
+.modal h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
+.task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-field label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.optional-label {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.field-error {
+  margin: 0;
+  min-height: 16px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--high);
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.confirm-message {
+  margin: 0 0 16px;
+  font-size: 14px;
 }
