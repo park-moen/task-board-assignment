@@ -5,24 +5,33 @@
 
 ## 1. 상태 구조
 
-**서버 상태**: `src/api/`(TanStack Query)에서 관리합니다. `queries.ts`가 쿼리 키 팩토리를, `mutations.ts`가 낙관적 업데이트·롤백을 담당하는 뮤테이션 hook(`useMoveTask` 등)을 담당합니다 (자세한 동작은 2번 참고).
+**서버 상태**: 태스크 목록은 TanStack Query 캐시에서 서버 상태로 관리합니다. `src/api/queries.ts`는 `queryKey`와 `queryOptions()` 기반 조회 옵션을 정의하고 `src/api/mutations.ts`는 생성·수정·삭제·이동 뮤테이션에서 낙관적 업데이트와 롤백을 담당합니다.(자세한 동작은 2번 참고).
 
-**클라이언트 상태**: 검색어·모달 on/off 같은 UI 전용 상태는 컴포넌트 로컬 state 또는 Context(Toast 등)로 관리하며, 별도 전역 상태 라이브러리(Redux/Zustand)는 도입하지 않았습니다.
+**태스크 배열 조작**: 태스크 배열의 기본 조작은 `src/lib/tasks.ts`의 순수 함수로 분리했습니다. `moveTask`/`filterByTitle`/`addTask`/`insertTaskAt`/`removeTask`/`updateTaskFields`가 배열 변형을 담당하고, `src/api/mutations.ts`는 이 함수들을 TanStack Query 캐시에 언제 반영하고 실패 시 어떻게 복구할지 조율합니다. 에러 분류도 `src/lib/errors.ts`로 분리해, 캐시·네트워크와 무관한 로직은 `src/lib/*.test.ts`에서 유닛 테스트할 수 있게 했습니다.
+
+**로컬 UI 상태**: 검색어(`query`), 생성·수정 모달 상태(`formState`), 삭제 확인 대상(`deletingTask`)처럼 `Board` 안에서만 쓰는 값은 컴포넌트 로컬 state로 관리합니다. 검색 결과는 별도 상태로 저장하지 않고, `tasks`와 디바운스된 검색어(`debouncedQuery`)에서 `useMemo`로 계산합니다.
+
+**전역 UI 상태**: Toast는 뮤테이션 실패처럼 여러 위치에서 띄워야 하므로 React Context API로 구현했습니다(`src/contexts/ToastContext.tsx`). 전역 상태 라이브러리는 도입하지 않았고, Toast 목록을 읽는 Context와 Toast를 추가·제거하는 함수를 제공하는 Context를 나눠 Toast 목록이 바뀔 때만 실제 Toast 렌더링 영역이 갱신되도록 했습니다.
 
 **이렇게 잡은 이유**:
-- 컴포넌트 트리가 얕아(Board → Column → Card, 최대 2단계) prop drilling 부담이 적어 Redux/Zustand 도입 실익이 낮다고 판단했습니다.
-- 서버 상태(캐싱, 낙관적 업데이트, 재시도)는 TanStack Query가 표준 패턴(onMutate/onError/onSettled)으로 이미 제공해, 직접 구현 대비 안정성이 높습니다.
+- 서버에서 온 데이터와 UI 상태는 관리 기준이 다릅니다. 서버 데이터와 동기화되어야 하는 태스크 목록은 TanStack Query에서 담당하고, 검색어·모달 상태처럼 화면 동작에만 필요한 값은 `Board`의 로컬 state로 제한했습니다.
+- 태스크 배열을 조작하는 기본 연산을 순수 함수로 분리해, 낙관적 업데이트·실패 복구·검색 필터링에서 같은 함수를 재사용할 수 있게 했습니다. 다만 캐시에 언제 반영하고 실패 시 어떻게 복구할지는 TanStack Query의 mutation 생명주기 안에서 처리합니다.
+- 컴포넌트 트리가 얕아(Board → Column → Card, 최대 2단계) Redux/Zustand를 도입하지 않아도 상태 전달 부담이 크지 않았습니다. 예외적으로 여러 위치에서 호출되는 Toast만 Context API로 분리했습니다.
 
-**고려했다가 버린 대안**: Zustand/Redux로 서버 상태까지 직접 관리하는 방안을 검토했으나, 낙관적 업데이트·롤백·경쟁 상태 처리를 전부 손으로 구현해야 해서 버그 위험이 커 채택하지 않았습니다.
+**TanStack Query를 선택한 이유**:
+- 이 프로젝트에서는 낙관적 업데이트와 롤백, 경쟁 상태 처리, GET 실패 재시도, 낙관적 업데이트 전에 진행 중인 refetch를 취소하는 처리가 필요했습니다. 이 요구사항을 구현하는 데 필요한 생명주기와 캐시 제어 기능을 TanStack Query가 제공한다고 판단했습니다. `onMutate`/`onError`/`onSuccess` 뮤테이션 생명주기로 스냅샷 저장과 롤백을 처리하고, `scope` 옵션으로 태스크별 요청을 직렬화하며, 조회 재시도(기본 3회)와 `queryFn`의 `signal`을 통한 `AbortSignal` 연동을 활용할 수 있었습니다. 이를 직접 구현하면 스냅샷 관리·재시도·요청 취소를 모두 직접 다뤄야 해 버그 위험이 커진다고 판단했습니다.
+- **`SWR`과 비교**: SWR도 `optimisticData`와 `rollbackOnError`로 낙관적 업데이트와 실패 복구를 구현할 수 있습니다. 다만 이 프로젝트에서는 `onMutate`에서 스냅샷을 만들고, 같은 mutation의 `onError`/`onSuccess`로 넘겨 복구 범위를 제어하며, `scope`로 태스크별 요청을 직렬화하는 구조를 사용했습니다. 이 흐름은 TanStack Query의 mutation 생명주기와 더 직접적으로 맞아 TanStack Query를 선택했습니다.
+- **`RTK Query`와 비교**: 기능은 유사하지만 Redux Toolkit 기반 API slice와 middleware 구성이 필요합니다. 위에서 "컴포넌트 트리가 얕아 Redux/Zustand 도입 실익이 낮다"고 판단했기 때문에, RTK Query를 위해 Redux 기반 구성을 추가하는 것은 현재 구조에 비해 무겁다고 판단했습니다.
+- 부가적으로 TypeScript strict 모드와 타입 추론이 잘 맞고, React Query Devtools로 캐시·뮤테이션 상태를 개발 중 직접 관찰할 수 있어(`main.tsx`에 연결해 사용) 디버깅에 도움이 되었습니다.
 
 ## 2. 낙관적 업데이트 & 롤백
 
-**현재 구현 범위**: 드래그 이동을 처리하는 `useMoveTask`와 동일한 방식으로, 생성·수정·삭제(`useCreateTask`/`useUpdateTask`/`useDeleteTask`, [Issue #11](https://github.com/park-moen/task-board-assignment/issues/11))도 mutation 생명주기(`onMutate`/`onError`/`onSuccess`)를 사용해 구현했습니다(`src/api/mutations.ts`).
+**현재 구현 범위**: 드래그 이동을 처리하는 `useMoveTask`와 동일한 방식으로, 생성·수정·삭제(`useCreateTask`/`useUpdateTask`/`useDeleteTask`, [Issue #11](https://github.com/park-moen/task-board-assignment/issues/11))도 mutation 생명주기(`onMutate`/`onError`, 필요한 경우 `onSuccess`)를 사용해 구현했습니다(`src/api/mutations.ts`). 삭제는 성공 시 이미 낙관적으로 제거된 캐시 상태를 그대로 유지하면 되어 `onSuccess`가 없습니다.
 
 **이동(`useMoveTask`)의 동작 방식**:
 1. `onMutate`에서 `queryClient.cancelQueries`로 진행 중인 refetch를 취소합니다. 이건 단순히 취소 요청을 보내는 게 아니라, `src/api/queries.ts`의 `queryFn: ({ signal }) => getTasks(signal)`에 전달해둔 `AbortSignal`을 통해 실제 fetch 요청 자체를 중단시키는 것입니다. 만약 이 취소 없이 드래그 시점에 이미 진행 중이던 GET 요청이 남아있다면, 낙관적 업데이트 이후 뒤늦게 성공 응답으로 도착해 TanStack Query가 "새로운 서버 상태"로 착각하고 캐시를 덮어써버립니다(뮤테이션이 실패한 것도 아닌데 카드가 원래 자리로 되돌아가 보이는 버그). `await`로 이 취소가 끝나길 기다린 뒤에야 다음 단계로 넘어가, 이 경쟁 상태를 원천 차단합니다.
 2. 현재 캐시에서 이동 대상 카드 하나(`previousTask`)만 스냅샷으로 저장한 뒤, `moveTask` 순수 함수로 캐시를 낙관적으로 갱신합니다.
-3. 요청이 실패하면 `onError`에서, 현재 `status`가 이 뮤테이션이 적용했던 값(`appliedStatus`)과 같을 때만 저장해둔 스냅샷(`previousTask`)의 **`status`만** 복원하고(`version`은 건드리지 않음), `useToast`로 실패를 알립니다. 그 사이 더 최신 이동이 이미 다른 값을 반영해뒀다면 되돌리지 않습니다.
+3. 요청이 실패하면 `onError`는 먼저 409(버전 충돌) 여부를 확인합니다. 409면 스냅샷 롤백 대신 서버 최신 상태를 반영하는 별도 분기로 처리하고(5번 참고), 그 외의 실패는 현재 `status`가 이 뮤테이션이 적용했던 값(`appliedStatus`)과 같을 때만 저장해둔 스냅샷(`previousTask`)의 **`status`만** 복원하고(`version`은 건드리지 않음), `useToast`로 실패를 알립니다. 그 사이 더 최신 이동이 이미 다른 값을 반영해뒀다면 되돌리지 않습니다.
 4. 성공하면 `onSuccess`에서 서버가 반환한 최신 태스크(갱신된 `version` 포함)로 캐시를 교체합니다.
 
 **스냅샷 범위 — 배열 전체가 아니라 카드 하나로 한정**:
@@ -37,10 +46,8 @@
 
 **생성·수정·삭제의 세부 동작**: 위 이동의 동작 방식을 기반으로, 각각 다음과 같이 응용했습니다.
 - **생성**: 서버가 확정한 `id`/`version`이 아직 없으므로 `temp-${crypto.randomUUID()}` 형식의 임시 `id`를 만들어 목록 맨 앞에 낙관적으로 추가합니다. 성공하면 임시 태스크를 서버가 반환한 실제 태스크로 교체하고, 실패하면 임시 태스크를 제거합니다. 생성은 기존 태스크와 충돌할 대상이 없는 새 태스크를 추가하는 작업이므로, `useMoveTask`처럼 태스크별 `scope`로 직렬화할 필요가 없어 표준 `useMutation()`을 사용합니다.
-- **수정**: `useMoveTask`와 동일하게 `scope: { id }`로 태스크별 요청을 직렬화합니다. 이를 통해 같은 태스크에 대한 드래그 이동과 수정이 동시에 들어와도 서로 경쟁하지 않도록 했습니다. 실패 시에는 `title`/`priority`/`description`이 "이 mutation이 적용한 값"과 여전히 같을 때만 되돌립니다. 이는 더 최신 수정을 덮어쓰지 않기 위한 처리로, `useMoveTask`의 `appliedStatus` 가드를 세 필드에 확장한 방식입니다.
-- **삭제**: 삭제도 태스크별 `scope`로 직렬화하고, 실패 시 스냅샷(`previousTask`)을 목록에 복원합니다. 복원 시점에 이미 같은 `id`가 목록에 있으면 동일 태스크가 중복 삽입되지 않도록 추가하지 않습니다.
-
-**모달/폼 구현**: 별도 라이브러리 없이 네이티브 `<dialog>` 요소(`src/components/Modal.tsx`)로 구현했습니다. `showModal()`은 포커스 트랩, Escape 닫기, `::backdrop`을 브라우저가 기본 제공하므로 직접 구현해야 할 접근성 관련 코드가 줄어듭니다. 생성/수정은 `TaskForm` 컴포넌트 하나를 `initialValues` 유무로 공유하고(Issue #11 요구사항), 삭제 확인은 범용 `ConfirmDialog`로 분리해 재사용할 수 있도록 했습니다.
+- **수정**: `useMoveTask`와 동일하게 `scope: { id }`로 태스크별 요청을 직렬화합니다. 이를 통해 같은 태스크에 대한 드래그 이동과 수정이 동시에 들어와도 서로 경쟁하지 않도록 했습니다. 실패 시에는 `title`/`priority`/`description`이 "이 mutation이 적용한 값"과 여전히 같을 때만 되돌립니다. 이는 최신 수정을 덮어쓰지 않기 위한 처리로, `useMoveTask`의 `appliedStatus` 가드를 세 필드에 확장한 방식입니다.
+- **삭제**: 삭제도 태스크별 `scope`로 직렬화하고, 실패 시 스냅샷(`previousTask`)을 원래 있던 인덱스(`previousIndex`)에 `insertTaskAt`으로 복원합니다. `addTask`는 항상 목록 맨 앞에 추가하므로 삭제 롤백처럼 원래 위치를 지켜야 하는 경우에는 맞지 않아 별도 함수를 사용했습니다. 복원 시점에 이미 같은 `id`가 목록에 있으면 동일 태스크가 중복 삽입되지 않도록 추가하지 않습니다.
 
 ## 3. 경쟁 상태(race condition)
 
@@ -60,7 +67,15 @@ TanStack Query의 뮤테이션 `scope` 옵션으로 해결했습니다. 같은 `
 **왜 `Promise.race`/요청 취소 대신 `scope`인가**: 취소는 클라이언트가 응답을 무시하게 할 뿐, mock 서버(`src/mocks/handlers.ts`)가 취소 신호(`AbortSignal`)를 전혀 확인하지 않아 서버 쪽 처리는 그대로 완료됩니다. 즉 "취소했다고 믿는" 요청이 실제로는 서버 상태를 바꿔놓아 다음 요청과 예측 불가능한 충돌을 일으킬 수 있습니다. `scope`는 요청 자체를 미루기만 하고 항상 실제 응답을 기다리므로 서버와 클라이언트의 상태 인식이 항상 일치합니다.
 
 ## 4. 대량 데이터 성능 (5,000개)
-- `Column.tsx`에서 전체 `tasks` 배열을 직접 `map()`으로 렌더링하던 방식을 `@tanstack/react-virtual`의 `useVirtualizer` 기반 렌더링으로 변경했습니다. 이제 뷰포트에 보이는 카드와 `overscan`으로 지정한 여분의 카드만 DOM에 렌더링합니다(`overscan: 5`). 초기 위치 계산을 위한 카드 높이는 `estimateSize`로 제공하고, 실제 렌더링된 높이는 `measureElement` ref로 측정해 보정합니다.
+
+5,000개 태스크를 전체 렌더링하면 초기 mount와 드래그 update에서 비용이 커져, 컬럼 내부 리스트에 가상화를 적용했습니다.
+
+- **`@tanstack/react-virtual`을 선택한 이유 (`react-window`/`react-virtualized` 대비)**:
+  - **Headless**: `useVirtualizer`는 리스트를 감싸는 자체 컴포넌트(`FixedSizeList`, `List` 등)를 강제하지 않고 크기/위치 계산 로직만 제공합니다. 기존 `Column`/`Card` 마크업 구조를 그대로 유지한 채 가상화만 끼워 넣을 수 있어, `react-window`/`react-virtualized`처럼 리스트 자체를 라이브러리 컴포넌트로 교체할 필요가 없었습니다.
+  - **유지보수 상태**: 확인 시점(2026-07-08) 기준 `@tanstack/react-virtual`은 약 1주 전(3.14.5), `react-window`는 약 5달 전(2.2.7), `react-virtualized`는 약 17~18개월 전(9.22.6)이 최신 배포입니다. 특히 `react-virtualized`는 같은 원작자가 이후 `react-window`로 대체한 사실상 이전 세대 라이브러리입니다.
+  - **동적 높이 측정 내장**: `measureElement`+`ResizeObserver`가 코어 API에 포함되어, 카드 높이가 균일하지 않게 바뀌어도([#11](https://github.com/park-moen/task-board-assignment/issues/11)에서 설명 필드 추가 등) 대응하기 쉽습니다. `react-window`의 `VariableSizeList`는 항목 높이가 바뀌면, 변경된 위치 이후의 높이 계산을 다시 하도록 `resetAfterIndex`를 직접 호출해야 해 상대적으로 번거롭습니다.
+
+- **구현 방식**: `Column.tsx`에서 전체 `tasks` 배열을 직접 `map()`으로 렌더링하던 방식을 `@tanstack/react-virtual`의 `useVirtualizer` 기반 렌더링으로 변경했습니다. 이제 뷰포트에 보이는 카드와 `overscan`으로 지정한 여분의 카드만 DOM에 렌더링합니다(`overscan: 5`). 초기 위치 계산을 위한 카드 높이는 `estimateSize`로 제공하고, 실제 렌더링된 높이는 `measureElement` ref로 측정해 보정합니다.
   - 고정 높이 대신 실측(`measureElement`) 방식을 선택한 이유: 현재 카드는 제목/배지/날짜만 렌더링하므로 높이가 사실상 일정하지만, 향후 태그나 설명이 추가되면(#11) 카드마다 높이가 달라질 수 있습니다. 실측 방식은 추가 구현 비용이 작으면서도 이후 콘텐츠 높이 변화에 대응할 수 있어 선택했습니다.
   - `getItemKey: index => tasks[index].id`를 명시했습니다. 기본값처럼 index를 key로 사용하면, 카드가 다른 컬럼으로 이동해 배열 내 항목 위치가 밀릴 때 동일한 index 위치의 측정값이 다른 카드에 재사용될 수 있습니다. 현재는 카드 높이가 균일해 문제가 눈에 잘 띄지 않지만, 높이가 균일하다는 조건에 의존하지 않도록 안정적인 task id를 key로 사용했습니다.
   - 기존 flex `gap: 8px` 방식은 절대 위치(`transform: translateY`)로 배치되는 가상화 아이템에 그대로 적용하기 어렵습니다. 대신 `.card-row`에 `padding-bottom: 8px`을 적용해 측정되는 행 높이에 카드 간격이 포함되도록 처리했습니다.
@@ -151,6 +166,12 @@ TanStack Query의 뮤테이션 `scope` 옵션으로 해결했습니다. 같은 `
 다만 생성 실패에서 입력값을 그대로 보존하고 재제출을 허용하면, 5번에서 설명한 것처럼 서버에는 이미 태스크가 생성됐지만 클라이언트가 응답을 받지 못한 경우 같은 태스크가 중복 생성될 수 있습니다. 따라서 폼 값 보존을 개선하려면 단순히 모달을 다시 열어주는 것뿐 아니라, 생성 요청의 중복 방지 방식(예: 클라이언트 생성 키 또는 서버 상태 확인)과 수정/삭제/이동의 최신 상태 검사를 함께 설계해야 합니다.
 
 이번 구현에서는 Priority 1/2 항목과 409·네트워크 실패 처리 정책을 먼저 마무리하는 것을 우선했고, 시간 제약상 폼 값 보존과 안전한 재제출 정책까지는 구현하지 못했습니다. 따라서 현재는 실패 상태를 정리하고 Toast로 원인을 안내하는 수준으로 범위를 제한했습니다.
+
+**다중 탭 동기화 미구현 (범위 제외)**
+
+한 탭에서 태스크를 변경해도 다른 탭 화면에는 새로고침 전까지 반영되지 않습니다. 원인은 mock 서버(`src/mocks/db.ts`) 구조에 있습니다 — `store`는 모듈 로드 시 `localStorage`에서 한 번만 읽어오는 탭별 독립 메모리 변수이고, 쓰기 성공 시 `localStorage`에 저장은 하지만 다른 탭이 이 변경을 실시간으로 감지할 `storage` 이벤트 리스너가 없습니다. 그래서 각 탭의 mock "서버"는 사실상 독립적으로 동작하고, `localStorage`를 통한 동기화는 새 페이지 로드 시점에만 일어납니다.
+
+구현하려면 각 탭에서 `window.addEventListener('storage', ...)`로 다른 탭의 변경을 감지하고, TanStack Query의 `queryClient.setQueryData`/`invalidateQueries`로 현재 탭 캐시를 갱신하는 작업이 추가로 필요합니다. README Priority 2의 권장 항목이라 필수는 아니었고, Priority 1 항목과 409·네트워크 정책, 검색 디바운싱을 먼저 견고하게 마무리하는 것을 우선해 시간 제약상 구현하지 않았습니다.
 
 **같은 카드에서 실패가 2번 이상 연속으로 겹치는 경우 (알려진 한계)**
 
