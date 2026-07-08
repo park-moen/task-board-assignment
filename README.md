@@ -1,230 +1,96 @@
-# 프론트엔드 채용 과제 — 태스크 보드 견고화
+# Task Board - 비동기 견고성 과제 제출
 
-## 과제 목표
+느리고 가끔 실패하는 mock API 위에서 동작하는 칸반 태스크 보드입니다. TanStack Query 기반 낙관적 업데이트/롤백, 경쟁 상태 처리, 409 충돌 처리, 5,000개 태스크 가상화, CRUD, 검색/디바운싱을 중심으로 구현했습니다.
 
-느리고 가끔 실패하는 서버(mock API) 위에서 동작하는 칸반 태스크 보드가 **미완성 상태**로 주어집니다.
-이 보드를 **현실의 네트워크 조건(지연·실패·충돌·대량 데이터)에서도 끊김 없이 동작하도록 완성**하여, Frontend 개발 역량을 평가합니다.
+- **배포 URL**: https://park-moen.github.io/task-board-assignment/
+- **설계 근거**: [DECISIONS.md](./DECISIONS.md)
+- **AI 활용 내역**: [AI_USAGE.md](./AI_USAGE.md)
 
-칸반 UI를 처음부터 만드는 능력은 평가하지 않습니다(기본 UI는 이미 제공됩니다). 다음 두 가지를 평가합니다.
+## 실행 방법
 
-- **비동기 견고성**: 서버가 느리고 실패해도 화면이 깨지지 않고 데이터 정합성이 유지되는가
-- **판단력**: 정답이 정해지지 않은 상황에서 합리적으로 결정하고 그 근거를 설명할 수 있는가
+```bash
+npm install    # postinstall에서 public/mockServiceWorker.js 자동 생성
+npm run dev    # 개발 서버 (http://localhost:5173)
+npm test       # 유닛 테스트 (Vitest)
+npm run build  # 타입체크 + 프로덕션 빌드
+```
 
-> 완벽한 기능 개수보다, 핵심 기능 하나를 끝까지 견고하게 만드는 것을 더 높게 평가합니다.
+Node 18 이상을 권장합니다.
 
-- 시작점(baseline) 데모: **https://kimxmfldh.github.io/task-board-assignment/**
-- 이 데모는 일부러 미완성 상태입니다. 5,000개가 그대로 렌더되어 버벅이고, 드래그해도 저장되지 않습니다.
+개발 중 실패를 강제로 재현하려면 `src/mocks/config.ts`의 `WRITE_FAILURE_RATE`를 `1`로 올리면 모든 쓰기 요청이 실패합니다(롤백 검증용). 제출 전 기본값은 `0.15`입니다.
 
-## 개발 기간
+## 구현 기능
 
-- **3일 (72시간)**
-- 제출 마감: **2026-07-08 (수) 23:59**
-- 제한된 시간 내 우선순위를 판단하여 핵심 기능(Priority 1)부터 구현해 주세요.
+### Priority 1 - 구현 완료
 
-## 제공되는 것 (스타터)
+| 기능 | 위치 | 비고 |
+|---|---|---|
+| 로딩 / 에러(재시도) / 빈 상태 분기 | `src/Board.tsx` | 최초 로드 실패 시 에러 화면과 재시도 버튼을 보여주고, 태스크 0개와 검색 결과 없음 상태를 구분 |
+| 낙관적 업데이트와 실패 롤백 | `src/api/mutations.ts`, `src/lib/tasks.ts` | 이동/생성/수정/삭제를 `onMutate`에서 먼저 캐시에 반영하고, 실패 시 `onError`에서 스냅샷으로 복원 |
+| 경쟁 상태 처리 | `src/api/mutations.ts` | 같은 태스크 요청은 `scope`로 직렬화하고, 실행 시점의 최신 `version`을 사용해 오래된 응답이 최신 상태를 덮어쓰지 않도록 처리 |
+| 대량 데이터 성능(5,000개) | `src/components/Column.tsx` | `@tanstack/react-virtual`로 뷰포트와 `overscan` 범위의 카드만 렌더링 |
+| 태스크 관리(CRUD) | `src/components/TaskForm.tsx`, `src/components/Modal.tsx`, `src/components/ConfirmDialog.tsx` | 생성/수정 공용 폼과 삭제 확인 다이얼로그 구현 |
+| 검색 | `src/Board.tsx`, `src/components/Input.tsx`, `src/lib/tasks.ts`, `src/hooks/useDebouncedValue.ts` | 제목 기준 검색, 가상화와 함께 적용, 300ms 디바운스 |
+| 핵심 로직 유닛 테스트 | `src/lib/tasks.test.ts`, `src/lib/errors.test.ts`, `src/hooks/useDebouncedValue.test.ts`, `src/api/mutations.test.tsx` | 필터링, 태스크 조작 순수 함수, 에러 분류, 디바운스 훅, 낙관적 업데이트/롤백/409 처리 검증 |
 
-이 저장소에는 아래가 이미 구현되어 있습니다. 지원자는 이 코드를 **읽고 확장**합니다.
+### Priority 2 - 구현 또는 정책 정리
 
-- 3컬럼 칸반 UI + 카드 렌더링 + HTML5 드래그 앤 드롭(기본 동작)
-- 브라우저에서 동작하는 mock API(MSW) — 지연·실패·충돌을 흉내냄
-- 초기 시드 데이터 5,000개(모든 지원자 동일)
-- Vite + React 18 + TypeScript(strict) + Vitest 세팅
+| 기능 | 상태 | 비고 |
+|---|---|---|
+| 409 충돌 처리 UX | 구현 | 서버가 응답에 담아 준 최신 상태(`payload.current`)를 조건부로 반영하고 별도 Toast 표시 |
+| 검색 디바운싱 | 구현 | 검색창 표시값은 즉시 반영하고, 실제 필터링과 컬럼별 그룹 계산에만 300ms 지연 적용 |
+| 실패한 요청의 재시도 / 백오프 | 정책 정리 | 자동 재시도/재시도 UI는 제외하고 실패 상태 정리와 원인 안내까지만 처리 |
+| 다중 탭 동기화 | 미구현 | 시간 제약상 범위 밖 |
+| 키보드 접근성(카드 이동, ARIA, 포커스 관리) | 미구현 | 시간 제약상 범위 밖 |
+| 우선순위·상태·태그 다중 필터 | 미구현 | 제목 검색만 구현 |
 
-**중요: 백엔드 개발은 필요 없습니다.** 여기서 "서버"는 실제 서버가 아니라 **브라우저 안에서 요청을 가로채 응답하는 가짜 서버(MSW)** 입니다. 지원자는 제공된 API 함수(`src/api/client.ts`)를 호출하기만 하면 됩니다. 이 과제는 100% 프론트엔드 작업입니다.
+재시도 정책과 미구현 사유는 [DECISIONS.md](./DECISIONS.md)의 5번, 6번에 정리했습니다.
 
-## 현재 구현 상태와 해결해야 할 문제
+## 기술 스택
 
-현재 코드는 "겉으로는 동작하지만 현실 조건에서 깨지는" 상태입니다. 아래 문제들을 해결하는 것이 과제의 핵심입니다.
+- React 18 + TypeScript(strict) + Vite
+- TanStack Query: 서버 상태, 캐싱, 낙관적 업데이트, 뮤테이션 생명주기 관리
+- `@tanstack/react-virtual`: 5,000개 태스크 목록 가상화
+- Vitest + Testing Library: 핵심 로직과 hook/mutation 테스트
+- MSW: 브라우저에서 동작하는 mock API
 
-| 기능 | 현재 동작 | 해결해야 할 문제 |
-|------|-----------|------------------|
-| 초기 로드 | `GET /api/tasks`로 5,000개를 불러와 렌더 | 로드 실패 시 에러 처리·재시도가 없음. 로딩 / 에러 / 빈 상태 구분이 없음 |
-| 카드 드래그 | 화면(로컬 state)만 변경 | 서버에 저장하지 않음. 낙관적 반영·실패 롤백·경쟁 상태 처리가 전혀 없음 |
-| 대량 렌더 | 5,000개를 전부 DOM에 렌더 | 가상화가 없어 스크롤과 드래그가 버벅임 |
-| 추가/수정/삭제 | API 함수만 있고 호출하지 않음 | 태스크 추가·수정·삭제 화면(CRUD)이 없음 |
-| 검색/필터 | 없음 | 없음 |
-| 테스트 | 순수 함수 테스트 예시 1개 | 핵심 로직에 대한 유닛 테스트가 필요 |
+상태 관리 라이브러리(Redux, Zustand 등)는 도입하지 않았습니다. 서버 상태는 TanStack Query에 두고, 검색어·모달 같은 UI 상태는 컴포넌트 state로, Toast는 Context로 관리합니다. 선택 근거는 [DECISIONS.md](./DECISIONS.md)에 정리했습니다.
 
-코드에서 확인할 위치
+## 코드 구조
 
-- 초기 로드·드래그 로직: `src/Board.tsx` (파일 안의 `TODO(P1)` 주석이 출발점입니다)
-- 전량 렌더: `src/components/Column.tsx`
-- API 호출 함수: `src/api/client.ts` (`getTasks`는 사용 중, `createTask`/`updateTask`/`deleteTask`는 아직 아무도 호출하지 않음)
+- `src/api/`: API 클라이언트, TanStack Query query/mutation hook
+- `src/components/`: 보드 UI, 카드, 컬럼, 모달, 폼, 확인 다이얼로그
+- `src/contexts/`: Toast 표시를 위한 Context
+- `src/hooks/`: 검색 디바운싱 hook
+- `src/lib/`: 태스크 조작 순수 함수, 에러 분류 유틸, QueryClient 설정
+- `src/mocks/`: MSW handler, mock DB, 시드 데이터, 실패율 설정
 
-## 요구사항
+## mock API
 
-### Priority 1 — 필수 구현
-
-반드시 구현되어야 하는 핵심 기능이며, 실질적인 평가가 여기서 이루어집니다.
-
-1. **로드 상태 처리** — 로딩 중 / 에러(재시도 가능) / 빈 상태를 각각 명확히 표현
-2. **낙관적 업데이트와 실패 롤백** (가장 중요)
-   - 이동·수정·삭제·생성 시 UI를 먼저 반영한 뒤 서버에 요청
-   - 서버 요청이 실패(약 15%)하면 이전 상태로 정확히 되돌리고 사용자에게 알림
-   - 스피너를 띄우고 성공해야만 반영하는 방식은 요구사항 미충족입니다
-3. **경쟁 상태(race condition) 처리** — 같은 카드를 빠르게 연속 이동해도 최종 상태가 서버 상태와 일치해야 하며, 늦게 도착한 오래된 응답이 최신 상태를 덮어쓰지 않아야 함
-4. **대량 데이터 성능(5,000개)** — 검색·필터·드래그가 버벅이지 않아야 함(구현 방법은 자유)
-5. **태스크 관리(CRUD)** — 추가(제목·우선순위 필수, 설명 선택), 수정, 삭제(확인 다이얼로그)
-6. **핵심 로직 유닛 테스트** — 필터·정렬·롤백 등 순수 로직의 정확성을 테스트로 증명
-
-### Priority 2 — 권장 구현
-
-시간이 허락하면 구현을 권장합니다.
-
-- 409 충돌 처리 UX
-- 실패한 요청의 재시도 / 백오프
-- 다중 탭 동기화(한 탭의 변경이 다른 탭에 반영)
-- 키보드 접근성(키보드만으로 카드 이동, ARIA, 포커스 관리)
-- 검색 디바운싱, 우선순위·상태·태그 다중 필터
-
-### 스스로 결정해야 하는 항목 (판단력 평가)
-
-아래는 정답을 제시하지 않습니다. 스스로 정책을 정하고 `DECISIONS.md`에 근거를 적어 주세요. 결정 자체보다 근거의 타당성을 평가합니다.
-
-- 네트워크가 완전히 끊겼을 때 어떻게 동작해야 하는가
-- 409 충돌이 났을 때 사용자에게 무엇을 보여주고 어떻게 해소하는가
-- 실패한 쓰기 요청을 자동으로 재시도할지, 사용자가 직접 재시도하게 할지
-
-### 평가하지 않는 항목
-
-아래에는 시간을 쓰지 마세요.
-
-- 다크 모드, 화려한 애니메이션, 정교한 비주얼 디자인
-
-## AI 도구 사용 정책
-
-- AI 도구 사용을 권장합니다 (ChatGPT, Claude, GitHub Copilot 등).
-- 개발 생산성 향상을 위한 도구 활용 능력도 중요한 역량입니다.
-- 단, 코드를 이해하고 설명할 수 있어야 합니다.
-- `AI_USAGE.md`에 사용한 AI 도구와 활용 방법을 명시해 주세요. 특히 AI가 제시한 답 중 무엇을 그대로 사용하고 무엇을 검증·거부·수정했는지 적어 주세요. (AI의 잘못된 코드를 잡아낸 경험을 높게 평가합니다.)
-
-## 기술 스택 및 mock API
-
-### 기술 스택
-
-- Framework: React 18
-- Language: TypeScript (strict)
-- Build Tool: Vite
-- Test: Vitest
-- Mock API: MSW (Mock Service Worker)
-
-상태 관리 라이브러리(Redux, Zustand 등)나 드래그 라이브러리, UI 라이브러리는 자유롭게 도입할 수 있습니다. 선택한 이유를 `DECISIONS.md`에 남겨 주세요.
-
-### mock API 명세
-
-모든 요청에 200~800ms의 랜덤 지연이 있습니다. 실패율과 지연 시간은 `src/mocks/config.ts`에서 조절할 수 있습니다.
+모든 요청에는 200~800ms의 랜덤 지연이 있으며, 실패율은 `src/mocks/config.ts`에서 조절할 수 있습니다.
 
 | Method | Endpoint | 설명 | 실패 조건 |
-|--------|----------|------|-----------|
+|---|---|---|---|
 | GET | `/api/tasks` | 전체 태스크(5,000개)를 한 번에 반환 | 드물게 500 |
 | POST | `/api/tasks` | 태스크 생성 | 약 15% 확률로 500 |
 | PATCH | `/api/tasks/:id` | 태스크 부분 수정 | 약 15% 확률로 500, `version` 불일치 시 409 |
 | DELETE | `/api/tasks/:id` | 태스크 삭제 | 약 15% 확률로 500 |
 
-- **낙관적 동시성 제어**: 각 태스크에는 `version`(정수)이 있습니다. `PATCH` 요청은 현재 알고 있는 `version`을 함께 보내야 하며, 서버 값과 다르면 409와 함께 서버의 최신 상태를 응답합니다. 성공 시 `version`이 1 증가합니다. 409 응답의 서버 최신 상태는 `src/api/client.ts`의 `ApiError.payload.current`로 읽을 수 있습니다.
-- **데이터 유지**: mock 서버는 내부적으로 localStorage를 저장소로 사용하므로, API를 올바르게 호출하면 새로고침해도 데이터가 유지됩니다. 초기 시드로 되돌리려면 브라우저 콘솔에서 `resetMockDb()`를 호출하세요.
-- **금지 사항**: mock API를 우회하여 앱 상태를 localStorage에 직접 저장하는 것은 금지합니다(비동기 처리가 이 과제의 본질입니다). 위에 언급한 localStorage는 가짜 서버 내부의 저장소이며 지원자가 건드릴 필요가 없습니다. 다중 탭 동기화 등 부가 목적의 localStorage 사용은 무방합니다.
+- **낙관적 동시성 제어**: 각 태스크에는 `version`이 있습니다. `PATCH` 요청은 현재 알고 있는 `version`을 함께 보내야 하며, 서버 값과 다르면 409와 함께 서버 최신 상태를 반환합니다. 409 응답의 서버 최신 상태는 `ApiError.payload.current`로 읽을 수 있습니다.
+- **데이터 유지**: mock 서버는 내부적으로 localStorage를 사용하므로, API를 통해 변경한 데이터는 새로고침 후에도 유지됩니다. 초기 시드로 되돌리려면 브라우저 콘솔에서 `resetMockDb()`를 호출하면 됩니다.
 
-### 태스크 데이터 구조
+## GitHub Pages 배포
 
-```ts
-type Task = {
-  id: string
-  title: string          // 필수
-  description?: string    // 선택
-  status: 'todo' | 'in-progress' | 'done'
-  priority: 'high' | 'medium' | 'low'
-  tags?: string[]
-  assignee?: string
-  createdAt: string       // ISO
-  updatedAt: string       // ISO
-  version: number         // 낙관적 동시성 제어용
-}
-```
+`main` 브랜치에 push되면 `.github/workflows/deploy.yml`이 `VITE_BASE="/${GITHUB_REPOSITORY#*/}/" npm run build`를 실행한 뒤 GitHub Pages에 배포합니다.
 
-## 실행 방법
+로컬에서 같은 base 경로로 빌드하려면 다음 명령을 사용할 수 있습니다.
 
 ```bash
-npm install    # postinstall 에서 public/mockServiceWorker.js 자동 생성
-npm run dev     # 개발 서버
-npm test        # 유닛 테스트 (Vitest)
-npm run build   # 타입체크 + 프로덕션 빌드
+VITE_BASE=/task-board-assignment/ npm run build
 ```
 
-Node 18 이상을 권장합니다.
+Windows Git Bash에서는 앞 슬래시가 경로로 변환될 수 있으므로 PowerShell에서 실행하는 것을 권장합니다.
 
-개발 중 실패를 강제로 재현하려면 `src/mocks/config.ts`에서 `WRITE_FAILURE_RATE`를 1로 올리면 모든 쓰기가 실패합니다(롤백 검증용). 제출 전에는 기본값으로 되돌려 주세요.
-
-### GitHub Pages 배포
-
-저장소 이름을 base로 지정하여 빌드합니다.
-
-```bash
-VITE_BASE=/저장소이름/ npm run build
+```powershell
+$env:VITE_BASE="/task-board-assignment/"; npm run build
 ```
-
-Windows Git Bash에서는 앞 슬래시가 경로로 변환될 수 있으니 PowerShell(`$env:VITE_BASE="/저장소이름/"; npm run build`)을 권장합니다. 배포 방법은 저장소의 `deploy.yml.example`을 참고하세요.
-
-## 제출 방법
-
-완성된 결과물은 아래 **두 가지**를 이메일로 제출해 주세요.
-
-- **제출처: support@synclife.co.kr**
-- **제출 마감: 2026-07-08 (수) 23:59**
-- 메일에 아래 2개만 기재하면 됩니다.
-  1. **GitHub Repository 주소** (Public)
-  2. **배포 URL** (GitHub Pages 등)
-
-아래 산출물(README / DECISIONS.md / AI_USAGE.md)은 별도 첨부가 아니라 **위 저장소 안에 포함**되어 있으면 됩니다.
-
-### 저장소에 포함되어야 할 것
-
-1. **Public GitHub Repository** — 의미 있는 커밋 10개 이상
-2. **배포 URL** — GitHub Pages 등, 배포 환경에서 구현 기능이 실제로 동작해야 함
-3. **README.md** — 배포 URL, 실행 방법, 구현/미구현 기능(Priority별 구분), 미구현 사유, 사용 기술 스택
-4. **DECISIONS.md** — 설계 결정과 근거 (저장소에 템플릿 포함)
-5. **AI_USAGE.md** — 사용한 AI 도구와 활용·검증 내역 (저장소에 템플릿 포함)
-
-## 평가 기준
-
-| 영역 | 비중 | 평가 내용 |
-|------|:----:|-----------|
-| 비동기 견고성 | 40% | 실패 시 정확한 롤백, 연속 이동 시 서버와의 정합성, 5,000개에서의 성능, 로딩·에러·빈 상태 처리 |
-| 코드 품질 | 30% | 컴포넌트 구조와 재사용성, 서버/클라이언트 상태 분리 설계, 핵심 로직 유닛 테스트, TypeScript 활용 |
-| 결정의 근거 | 20% | DECISIONS.md의 트레이드오프 서술, 정답 없는 항목에 대한 결정 근거, AI 답변 검증 사례 |
-| 기본 사용성 | 10% | 직관적인 조작 흐름, 확인 다이얼로그와 피드백 |
-
-핵심 원칙은 "개수보다 완성도, 결과보다 근거"입니다. Priority 1을 견고하게 완성하는 것이 Priority 2를 얕게 여러 개 구현하는 것보다 높은 평가를 받습니다.
-
-## 제출 전 체크리스트
-
-- [ ] 배포 URL에서 구현 기능이 정상 동작
-- [ ] `WRITE_FAILURE_RATE`를 높여 롤백 동작을 확인한 뒤 기본값으로 복구
-- [ ] 카드를 빠르게 연속 이동해도 서버 상태와 일치
-- [ ] 5,000개에서 검색·드래그가 버벅이지 않음
-- [ ] 유닛 테스트 통과, Console 에러 없음
-- [ ] README / DECISIONS.md / AI_USAGE.md 작성 완료
-- [ ] 커밋 10개 이상
-
-## FAQ
-
-**모든 기능을 구현해야 하나요?**
-아니요. Priority 1을 견고하게 완성하는 것을 우선하세요. 우선순위 판단 능력도 평가 대상입니다.
-
-**백엔드를 만들어야 하나요?**
-아니요. "서버"는 브라우저에서 동작하는 MSW 가짜 서버이며, 이미 제공됩니다. 제공된 API 함수만 호출하면 됩니다.
-
-**mock API 대신 localStorage로 저장해도 되나요?**
-안 됩니다. 비동기 처리가 과제의 본질입니다. 다만 다중 탭 동기화 등 부가 목적의 localStorage 사용은 무방합니다.
-
-**드래그·UI 라이브러리를 사용해도 되나요?**
-네. 선택한 이유를 DECISIONS.md에 남겨 주세요.
-
-**AI 도구를 사용하면 감점되나요?**
-아니요. 오히려 권장합니다. 다만 면접에서 본인의 코드를 설명할 수 있어야 합니다.
-
----
-
-문의: support@synclife.co.kr · 담당: 김대홍
-
-"완벽한 전체보다 동작하는 일부가 낫습니다." 과제 수행에 행운을 빕니다.
